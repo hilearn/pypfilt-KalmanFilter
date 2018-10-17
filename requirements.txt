@@ -1,1 +1,7 @@
 flake8==3.5.0
+numpy==1.15.2
+matplotlib==3.0.0
+filterpy==1.0.0
+pypfilt==0.5.4
+h5py==2.8.0
+scipy==1.0.0
