@@ -2,16 +2,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 from filterpy.kalman import KalmanFilter
 import pypfilt
-import h5py
 import scipy
+import os
+import argparse
+import sys
+from netCDF4 import Dataset
 
 
 def kalmanfilter_randomwalk(obs, sigma_w=10, sigma_r=10):
     kalman = KalmanFilter(obs.shape[1], 1)
     kalman.x = np.zeros((kalman.dim_x, 1))
     kalman.P = np.eye(kalman.dim_x) * 1 ** 2
-    kalman.Q = (np.eye(kalman.dim_x) * 0.2 ** 2)
-    kalman.R = (np.eye(kalman.dim_z) * 0.1 ** 2)
+    kalman.Q = (np.eye(kalman.dim_x) * sigma_w ** 2)
+    kalman.R = (np.eye(kalman.dim_z) * sigma_r ** 2)
     kalman.F = np.eye(kalman.dim_x)
 
     kalman.predict()
@@ -84,9 +87,9 @@ def bootstrap_forecast_randomwalk(obs,
                                   sigma_r=1,
                                   t0=0.0,
                                   t1=100.0):
-    fs_times = list(range(1, len(obs)))
+    fs_times = list(range(0, len(obs)))
     fs_times = [float(time) for time in fs_times]
-    params = make_randomwalk_params(px_count=1000,
+    params = make_randomwalk_params(px_count=4000,
                                     sigma_r=sigma_r,
                                     sigma_w=sigma_w)
 
@@ -94,46 +97,68 @@ def bootstrap_forecast_randomwalk(obs,
     summary.add_tables(
         pypfilt.summary.ModelCIs(probs=[0], name=u'model_cints'),
         pypfilt.summary.Obs())
-    pypfilt.forecast(params,
-                     t0,
-                     t1,
-                     [obs],
-                     fs_times,
-                     summary,
-                     'output')
+    results = pypfilt.run(params,
+                          t0,
+                          t1,
+                          [obs],
+                          summary,
+                          save_when=fs_times,
+                          save_to='output')
+    #     data = h5py.File('output', 'r')
+    #     cints = data['data']['model_cints']
+    #     convs = pypfilt.summary.default_converters(pypfilt.Scalar())
+    #     cints = pypfilt.summary.convert_cols(cints, convs)
+    #     state_cints = cints[cints['name'] == b'states']
+    #     fs_mask = state_cints['fs_date'] < max(state_cints['date'])
+    #     state_cints = state_cints[fs_mask]
+    #     data.close()
+
+    return results
 
 
 if __name__ == "__main__":
 
-    X = np.linspace(0, 20, 100)
-    real_Y = np.sin(X)
-    noisy_Y = real_Y + np.random.normal(0, 0.1, 100)
-    noisy_Y = noisy_Y.reshape(100, 1)
-    obs = [{'date': i,
-            'value': ret,
-            'unit': 'states',
-            'period': 1,
-            'source': 'Some system'}
-           for i, ret in enumerate(noisy_Y)]
-    bootstrap_forecast_randomwalk(obs, sigma_w=0.2, sigma_r=0.1)
-    states = kalmanfilter_randomwalk(noisy_Y, sigma_w=0.2, sigma_r=0.1)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--data", help="data file path")
+    args = parser.parse_args()
+    data_path = os.path.abspath(args.data)
 
-    data = h5py.File('output', 'r')
-    cints = data['data']['model_cints']
-    convs = pypfilt.summary.default_converters(pypfilt.Scalar())
-    cints = pypfilt.summary.convert_cols(cints, convs)
-    state_cints = cints[cints['name'] == b'states']
-    fs_mask = state_cints['fs_date'] < max(state_cints['date'])
-    state_cints = state_cints[fs_mask]
-    data.close()
+    rootgrp = Dataset(data_path, 'r')
+    logreturns = rootgrp.variables['rets'][:]
+    logrs = logreturns.reshape(logreturns.shape[0], 1)
+
+    obs = []
+    for i, ret in enumerate(logreturns):
+        obs.append(
+            {'date': float(i),
+             'value': ret,
+             'unit': 'states',
+             'period': 1,
+             'source': 'Some system'})
+
+    state_cints = bootstrap_forecast_randomwalk(obs,
+                                                sigma_w=0.2,
+                                                sigma_r=0.1,
+                                                t1=float(logreturns.shape[0]))
+    states = kalmanfilter_randomwalk(logrs, sigma_w=0.2, sigma_r=0.1)
+
+    x = os.system('cd ./libbi && ./filter.sh {0} && cd ../'.format(data_path))
+    if x:
+        sys.exit(x)
+
+    libbi_filtered_grp = Dataset('filtered.nc', 'r')
+    libbi_logreturns = libbi_filtered_grp.variables['v'][:]
 
     real_states = []
-    for state in state_cints:
-        if state[0] == state[1]:
-            real_states.append(state[3])
+    for state in state_cints['summary']['model_cints']:
+        real_states.append(state[3])
 
     plt.plot(real_states, color='blue', label='pypfilt result')
-    plt.plot(states[2:], color='red', label='kalman result')
-    plt.plot(real_Y[1:], color='black', label='real results')
+    plt.plot(range(-1, 100), states, color='red', label='kalman result')
+    plt.plot(libbi_logreturns.mean(axis=1),
+             color='black',
+             label='libbi results')
+    plt.plot(logreturns, color='green', label='real')
     plt.legend()
+    plt.savefig('result.png')
     plt.show()

@@ -105,4 +105,10 @@ venv.bak/
 
 
 .tmp/
+tmp*
+.idea/
 output
+filtered.nc
+.KalmanFilter/
+Pypfilt-RadnomWalk-Example.ipynb
+.RandomWalk/
