@@ -119,8 +119,10 @@ def bootstrap_forecast_randomwalk(obs,
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--data", help="data file path")
+    parser.add_argument("-d", "--data", help="data file path",
+                        default='libbi/data/rets.nc')
     args = parser.parse_args()
+
     data_path = os.path.abspath(args.data)
 
     rootgrp = Dataset(data_path, 'r')
