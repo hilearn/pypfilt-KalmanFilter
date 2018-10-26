@@ -6,3 +6,5 @@ filterpy==1.0.0
 pypfilt==0.5.4
 h5py==2.8.0
 scipy==1.0.0
+xarray==0.10.9
+pandas==0.23.4

@@ -7,5 +7,5 @@ libbi filter \
   --filter bootstrap \
   --nparticles 20000 \
   --start-time 0 \
-  --end-time 100 \
+  --end-time $2 \
   --output-file ../filtered.nc

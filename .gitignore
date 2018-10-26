@@ -112,3 +112,7 @@ filtered.nc
 .KalmanFilter/
 Pypfilt-RadnomWalk-Example.ipynb
 .RandomWalk/
+input.nc
+input.csv
+results.png
+filtered.nc

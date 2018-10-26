@@ -6,10 +6,43 @@ import scipy
 import os
 import argparse
 import sys
+import pandas as pd
+import convert_csv_netcdf as cnv
 from netCDF4 import Dataset
 
 
-def kalmanfilter_randomwalk(obs, sigma_w=10, sigma_r=10):
+def generate_pypfilt_obs_data(data: list,
+                              source='Any',
+                              unit='states',
+                              period=1):
+    obs = []
+    for i, ret in enumerate(data):
+        obs.append(
+            {'date': float(i),
+             'value': ret,
+             'unit': unit,
+             'period': period,
+             'source': source})
+    return obs
+
+
+def extract_timeseries_from_csv(csv_path, variable):
+    data_frame = pd.read_csv(csv_path)
+    var = data_frame[variable]
+    return np.array(var)
+
+
+def parse_args(*argument_array):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--data', help="data file path")
+    parser.add_argument('-v', '--variable',
+                        help='variable on which particle filter will be done',
+                        required=True)
+    args = parser.parse_args(*argument_array)
+    return args
+
+
+def kalmanfilter_randomwalk(obs, sigma_w=10., sigma_r=10.):
     kalman = KalmanFilter(obs.shape[1], 1)
     kalman.x = np.zeros((kalman.dim_x, 1))
     kalman.P = np.eye(kalman.dim_x) * 1 ** 2
@@ -68,7 +101,7 @@ def log_llhd(params, obs_list, curr, prev_dict, weights):
     return log_llhd
 
 
-def make_randomwalk_params(px_count, ret=0.25, sigma_r=1, sigma_w=10):
+def make_randomwalk_params(px_count, ret=0.25, sigma_r=1., sigma_w=10.):
     model = RandomWalk()
     time_scale = pypfilt.Scalar()
     params = pypfilt.default_params(model, time_scale, px_count=px_count)
@@ -83,11 +116,11 @@ def make_randomwalk_params(px_count, ret=0.25, sigma_r=1, sigma_w=10):
 
 
 def bootstrap_forecast_randomwalk(obs,
-                                  sigma_w=10,
-                                  sigma_r=1,
+                                  sigma_w=10.,
+                                  sigma_r=1.,
                                   t0=0.0,
                                   t1=100.0):
-    fs_times = list(range(0, len(obs)))
+    fs_times = list(range(1, len(obs)))
     fs_times = [float(time) for time in fs_times]
     params = make_randomwalk_params(px_count=4000,
                                     sigma_r=sigma_r,
@@ -104,14 +137,6 @@ def bootstrap_forecast_randomwalk(obs,
                           summary,
                           save_when=fs_times,
                           save_to='output')
-    #     data = h5py.File('output', 'r')
-    #     cints = data['data']['model_cints']
-    #     convs = pypfilt.summary.default_converters(pypfilt.Scalar())
-    #     cints = pypfilt.summary.convert_cols(cints, convs)
-    #     state_cints = cints[cints['name'] == b'states']
-    #     fs_mask = state_cints['fs_date'] < max(state_cints['date'])
-    #     state_cints = state_cints[fs_mask]
-    #     data.close()
 
     return results
 
@@ -119,32 +144,32 @@ def bootstrap_forecast_randomwalk(obs,
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--data", help="data file path",
-                        default='libbi/data/rets.nc')
-    args = parser.parse_args()
+    args = parse_args()
 
+    # getting data path and variable for particle filtering
     data_path = os.path.abspath(args.data)
+    variable = args.variable
 
-    rootgrp = Dataset(data_path, 'r')
-    logreturns = rootgrp.variables['rets'][:]
-    logrs = logreturns.reshape(logreturns.shape[0], 1)
+    # extracting data
+    data = extract_timeseries_from_csv(data_path, variable)
 
-    obs = []
-    for i, ret in enumerate(logreturns):
-        obs.append(
-            {'date': float(i),
-             'value': ret,
-             'unit': 'states',
-             'period': 1,
-             'source': 'Some system'})
+    # generating data
+    cnv.convert_csv_to_netcdf(csv_path=data_path,
+                              netcdf_path='input.nc',
+                              var=variable)
+    libbi_data_path = os.path.abspath('input.nc')
+    pypfilt_data = generate_pypfilt_obs_data(list(data))
+    kalman_data = data.reshape(data.shape[0], 1)
 
-    state_cints = bootstrap_forecast_randomwalk(obs,
+    # implementing particle filtering
+    state_cints = bootstrap_forecast_randomwalk(pypfilt_data,
                                                 sigma_w=0.2,
                                                 sigma_r=0.1,
-                                                t1=float(logreturns.shape[0]))
-    states = kalmanfilter_randomwalk(logrs, sigma_w=0.2, sigma_r=0.1)
+                                                t1=float(data.shape[0]))
+    states = kalmanfilter_randomwalk(kalman_data, sigma_w=0.2, sigma_r=0.1)
 
-    x = os.system('cd ./libbi && ./filter.sh {0} && cd ../'.format(data_path))
+    # running libbi
+    x = os.system('cd ./libbi && ./filter.sh {0} {1} && cd ../'.format(libbi_data_path, data.shape[0])) # noqa
     if x:
         sys.exit(x)
 
@@ -156,11 +181,11 @@ if __name__ == "__main__":
         real_states.append(state[3])
 
     plt.plot(real_states, color='blue', label='pypfilt result')
-    plt.plot(range(-1, 100), states, color='red', label='kalman result')
+    plt.plot(states, color='red', label='kalman result')
     plt.plot(libbi_logreturns.mean(axis=1),
              color='black',
              label='libbi results')
-    plt.plot(logreturns, color='green', label='real')
+    plt.plot(data, color='green', label='real')
     plt.legend()
     plt.savefig('result.png')
     plt.show()
